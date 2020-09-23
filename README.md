@@ -6,4 +6,4 @@
 
 - "README.md" file contents
 - "setup.py" file contents
-- "sample_package" directory name
+- "numpy_nn" directory name

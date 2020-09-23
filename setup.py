@@ -1,12 +1,12 @@
 from setuptools import find_packages, setup
 
 setup(
-    name="python3-template",
+    name="numpy-neural-net",
     version="0.0.1",
-    description="This repository is template for my python project.",
+    description="This is neural network samples implemented with numpy without machine learning libraries.",
     python_requires='>=3.7',
     install_requires=[],
-    url="https://github.com/psj8252/python3-template.git",
+    url="https://github.com/psj8252/numpy-neural-net.git",
     author="Park Sangjun",
     packages=find_packages(exclude=["tests"]),
 )
