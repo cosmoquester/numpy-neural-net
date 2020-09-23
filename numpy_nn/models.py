@@ -1,5 +1,45 @@
 import numpy as np
 from .utils import sign
+from collections import OrderedDict
+
+
+def convolution2d(x, kernel, stride):
+    """
+    Convolution 2D : Do Convolution on 'x' with filter = 'kernel', stride = 'stride'
+
+    [Input]
+    x: 2D data (e.g. image)
+    - Shape : (Height, Width)
+
+    kernel : 2D convolution filter
+    - Shape : (Kernel size, Kernel size)
+
+    stride : Stride size
+    - dtype : int
+
+    [Output]
+    conv_out : convolution result
+    - Shape : (Conv_Height, Conv_Width)
+    - Conv_Height & Conv_Width can be calculated using 'Height', 'Width', 'Kernel size', 'Stride'
+    """
+    height, width = x.shape
+    kernel_size = kernel.shape[0]
+    conv_out = np.zeros(
+        ((height - kernel_size) // stride + 1, (width - kernel_size) // stride + 1),
+        dtype=np.float64,
+    )
+
+    for i in range(conv_out.shape[0]):
+        for j in range(conv_out.shape[1]):
+            conv_out[i, j] += np.sum(
+                x[
+                    i * stride : i * stride + kernel_size,
+                    j * stride : j * stride + kernel_size,
+                ]
+                * kernel
+            )
+
+    return conv_out
 
 
 class Perceptron:
@@ -467,3 +507,393 @@ class SoftmaxOutputLayer:
         dx = np.matmul(back, self.W.T)
 
         return dx
+
+
+class ConvolutionLayer:
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, pad=0):
+        self.W = np.random.randn(out_channels, in_channels, kernel_size, kernel_size)
+        self.b = np.zeros(out_channels, dtype=np.float32)
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.pad = pad
+
+    def forward(self, x):
+        """
+        Convolution Layer Forward.
+
+        [Input]
+        x: 4-D input batch data
+        - Shape : (Batch size, In Channel, Height, Width)
+
+        [Output]
+        conv_out : convolution result
+        - Shape : (Conv_Height, Conv_Width)
+        - Conv_Height & Conv_Width can be calculated using 'Height', 'Width', 'Kernel size', 'Stride'
+        """
+        self.x = x
+        batch_size, in_channel, _, _ = x.shape
+        conv = self.convolution(x, self.W, self.b, self.stride, self.pad)
+        self.output_shape = conv.shape
+
+        return conv
+
+    def convolution(self, x, kernel, bias=None, stride=1, pad=0):
+        """
+        Convolution Operation.
+        Add bias if bias is not none
+
+        Use
+        variables --> self.W, self.b, self.stride, self.pad, self.kernel_size
+        function --> convolution2d (what you already implemented above.)
+
+        [Input]
+        x: 4-D input batch data
+        - Shape : (Batch size, In Channel, Height, Width)
+        kernel: 4-D convolution filter
+        - Shape : (Out Channel, In Channel, Kernel size, Kernel size)
+        bias: 1-D bias
+        - Shape : (Out Channel)
+        - default : None
+        stride : Stride size
+        - dtype : int
+        - default : 1
+        pad: pad value, how much to pad
+        - dtype : int
+        - default : 0
+
+        [Output]
+        conv_out : convolution result
+        - Shape : (Batch size, Out Channel, Conv_Height, Conv_Width)
+        - Conv_Height & Conv_Width can be calculated using 'Height', 'Width', 'Kernel size', 'Stride'
+        """
+        batch_size, in_channel, _, _ = x.shape
+
+        if pad > 0:
+            x = self.zero_pad(x, pad)
+
+        _, _, height, width = x.shape
+        out_channel, _, kernel_size, _ = kernel.shape
+        assert x.shape[1] == kernel.shape[1]
+
+        conv = np.zeros(
+            (
+                batch_size,
+                out_channel,
+                (height - kernel_size) // stride + 1,
+                (width - kernel_size) // stride + 1,
+            ),
+            dtype=np.float64,
+        )
+
+        for n in range(batch_size):
+            for oc in range(out_channel):
+                for ic in range(in_channel):
+                    conv[n, oc] += convolution2d(x[n, ic], kernel[oc, ic], stride)
+                if type(bias) != type(None):
+                    conv[n, oc] += bias[oc]
+
+        return conv
+
+    def backward(self, d_prev):
+        """
+        Convolution Layer Backward.
+        Compute derivatives w.r.t x, W, b (self.x, self.W, self.b)
+
+        [Input]
+        d_prev: Gradients value so far in back-propagation process.
+
+        [Output]
+        self.dx : Gradient values of input x (self.x)
+        - Shape : (Batch size, channel, Heigth, Width)
+        """
+        batch_size, in_channel, height, width = self.x.shape
+        out_channel, _, kernel_size, _ = self.W.shape
+
+        if len(d_prev.shape) < 3:
+            d_prev = d_prev.reshape(*self.output_shape)
+
+        self.dW = np.zeros_like(self.W, dtype=np.float64)
+        self.db = np.zeros_like(self.b, dtype=np.float64)
+        dx = np.zeros_like(self.x, dtype=np.float64)
+
+        # dW
+        for n in range(batch_size):
+            for oc in range(out_channel):
+                for ic in range(in_channel):
+                    self.dW[oc, ic] += convolution2d(self.x[n, ic], d_prev[n, oc], self.stride)
+
+        # db
+        for n in range(batch_size):
+            for oc in range(out_channel):
+                self.db[oc] += np.sum(d_prev[n, oc])
+
+        # dx
+        d_prev = self.zero_pad(d_prev, (dx.shape[2] - d_prev.shape[2] + kernel_size - 1) // 2)
+
+        for n in range(batch_size):
+            for oc in range(out_channel):
+                for ic in range(in_channel):
+                    dx[n, ic] += convolution2d(d_prev[n, oc], self.W[oc, ic].T[::-1].T[::-1], self.stride)
+
+        return dx
+
+    def zero_pad(self, x, pad):
+        """
+        Zero padding
+        Given x and pad value, pad input 'x' around height & width.
+
+        [Input]
+        x: 4-D input batch data
+        - Shape : (Batch size, In Channel, Height, Width)
+
+        pad: pad value. how much to pad on one side.
+        e.g. pad=2 => pad 2 zeros on left, right, up & down.
+
+        [Output]
+        padded_x : padded x
+        - Shape : (Batch size, In Channel, Padded_Height, Padded_Width)
+        """
+        batch_size, in_channel, height, width = x.shape
+        padded_x = np.zeros(
+            (batch_size, in_channel, height + pad * 2, width + pad * 2),
+            dtype=np.float64,
+        )
+
+        for n in range(batch_size):
+            for ic in range(in_channel):
+                padded_x[n, ic] = np.pad(x[n, ic], pad, "constant", constant_values=0)
+
+        return padded_x
+
+
+class MaxPoolingLayer:
+    def __init__(self, kernel_size, stride=2):
+        self.kernel_size = kernel_size
+        self.stride = stride
+
+    def forward(self, x):
+        """
+        Max-Pooling Layer Forward. Pool maximum value by striding kernel.
+
+        If image size is not divisible by pooling size (e.g. 4x4 image, 3x3 pool, stride=2),
+        only pool from valid region, not go beyond the input image.
+        4x4 image, 3x3 pool, stride=2 => 1x1 out
+        (* Actually you should set kernel/pooling size, stride and pad properly, so that this does not happen.)
+
+        [Input]
+        x: 4-D input batch data
+        - Shape : (Batch size, In Channel, Height, Width)
+
+        [Output]
+        pool_out : max_pool result
+        - Shape : (Batch size, Out Channel, Pool_Height, Pool_Width)​
+        - Pool_Height & Pool_Width can be calculated using 'Height', 'Width', 'Kernel size', 'Stride'
+        """
+        max_pool = None
+        batch_size, channel, height, width = x.shape
+        # Where it came from x. (1 if it is pooled, 0 otherwise.)
+        # Might be useful when backward
+        self.mask = np.zeros_like(x)
+
+        kernel_size = self.kernel_size
+        stride = self.stride
+        max_pool = np.zeros(
+            (
+                batch_size,
+                channel,
+                (height - kernel_size) // stride + 1,
+                (width - kernel_size) // stride + 1,
+            ),
+            dtype=float,
+        )
+
+        for n in range(batch_size):
+            for c in range(channel):
+                for hi, h in enumerate(range(kernel_size - 1, height, stride)):
+                    for wi, w in enumerate(range(kernel_size - 1, width, stride)):
+                        tmp = x[
+                            n,
+                            c,
+                            h - kernel_size + 1 : h + 1,
+                            w - kernel_size + 1 : w + 1,
+                        ]
+                        pld = np.unravel_index(tmp.argmax(), tmp.shape)
+                        self.mask[
+                            n,
+                            c,
+                            h - kernel_size + 1 + pld[0],
+                            w - kernel_size + 1 + pld[1],
+                        ] = 1
+                        max_pool[n, c, hi, wi] = tmp[pld]
+
+        self.output_shape = max_pool.shape
+        return max_pool
+
+    def backward(self, d_prev=1):
+        """
+        Max-Pooling Layer Backward.
+        In backward pass, Max-pool distributes gradients to where it came from in forward pass.
+
+        [Input]
+        d_prev: Gradients value so far in back-propagation process.
+        - Shape can be varies since either Conv. layer or FC-layer can follow.
+            (Batch_size, Channel, Height, Width)
+            or
+            (Batch_size, FC Dimension)
+
+        [Output]
+        d_max : max_pool gradients
+        - Shape : (batch_size, channel, height, width) - same shape as input x
+        """
+        d_max = None
+        if len(d_prev.shape) < 3:
+            d_prev = d_prev.reshape(*self.output_shape)
+        batch, channel, height, width = d_prev.shape
+
+        kernel_size = self.kernel_size
+        stride = self.stride
+        d_max = self.mask.copy()
+
+        for n in range(batch):
+            for c in range(channel):
+                for h in range(kernel_size, d_max.shape[2] + 1, stride):
+                    for w in range(kernel_size, d_max.shape[3] + 1, stride):
+                        d_max[n, c, h - kernel_size : h, w - kernel_size : w] *= d_prev[
+                            n,
+                            c,
+                            (h - kernel_size) // stride,
+                            (w - kernel_size) // stride,
+                        ]
+
+        return d_max
+
+
+class FullyConnectedLayer:
+    def __init__(self, input_dim, output_dim):
+        # Weight Initialization
+        self.W = np.random.randn(input_dim, output_dim) / np.sqrt(input_dim / 2)
+        self.b = np.zeros(output_dim)
+
+    def forward(self, x):
+        """
+        FC Layer Forward.
+        Use variables : self.x, self.W, self.b
+
+        [Input]
+        x: Input features.
+        - Shape : (Batch size, In Channel, Height, Width)
+        or
+        - Shape : (Batch size, input_dim)
+
+        [Output]
+        self.out : fc result
+        - Shape : (Batch size, output_dim)
+        """
+        if len(x.shape) > 2:
+            batch_size = x.shape[0]
+            x = x.reshape(batch_size, -1)
+        self.x = x
+        self.out = np.matmul(x, self.W) + self.b
+
+        return self.out
+
+    def backward(self, d_prev):
+        """
+        FC Layer Backward.
+        Use variables : self.x, self.W
+
+        [Input]
+        d_prev: Gradients value so far in back-propagation process.
+
+        [Output]
+        dx : Gradients w.r.t input x
+        - Shape : (batch_size, input_dim) - same shape as input x
+        """
+        self.dW = np.zeros_like(self.W, dtype=np.float64)  # Gradient w.r.t. weight (self.W)
+        self.db = np.zeros_like(self.b, dtype=np.float64)  # Gradient w.r.t. bias (self.b)
+        dx = np.zeros_like(self.x, dtype=np.float64)  # Gradient w.r.t. input x
+
+        self.db = np.sum(d_prev, axis=0)
+        self.dW = np.matmul(self.x.transpose(), d_prev)
+        dx = np.matmul(d_prev, self.W.transpose())
+
+        return dx
+
+
+class SoftmaxLayer:
+    def __init__(self):
+        self.y = None
+        self.y_hat = None
+
+    def forward(self, x):
+        """
+        Softmax Layer Forward.
+        Apply softmax (not log softmax or others...) on axis-1
+
+        [Input]
+        x: Score to apply softmax
+        - Shape: (N, C)
+
+        [Output]
+        y_hat: Softmax probability distribution.
+        - Shape: (N, C)
+        """
+        x -= np.expand_dims(x.max(axis=1), 1)
+        expos = np.exp(x)
+        linesums = np.sum(expos, axis=1)
+        self.y_hat = expos / linesums.reshape((linesums.shape[0], 1))
+
+        return self.y_hat
+
+    def backward(self, d_prev=1):
+        """
+
+        Softmax Layer Backward.
+        Gradients w.r.t input score.
+
+        That is,
+        Forward  : softmax prob = softmax(score)
+        Backward : dL / dscore => 'dx'
+
+        Compute dx (dL / dscore).
+        Check loss function in HW5 pdf file.
+
+        """
+        batch_size = self.y.shape[0]
+        dx = (self.y_hat - self.y) / batch_size
+
+        return dx
+
+    def ce_loss(self, y_hat, y):
+        """
+
+        Compute Cross-entropy Loss.
+        Use epsilon (eps) for numerical stability in log.
+        Epsilon 값을 계산의 안정성을 위해 log에 사용하세요.
+
+        Check loss function in HW5 pdf file.
+        Loss Function 을 과제 파일에서 확인하세요.
+
+        [Input]
+        y_hat: Probability after softmax.
+        - Shape : (Batch_size, # of class)
+
+        y: One-hot true label
+        - Shape : (Batch_size, # of class)
+
+        [Output]
+        loss : cross-entropy loss
+        - Single float
+
+        """
+        eps = 1e-10
+        self.y_hat = y_hat
+        self.y = y
+
+        y = np.argmax(y, axis=1)
+        losses = -np.log(y_hat[range(y.shape[0]), y] + eps)
+        loss = np.average(losses)
+
+        return loss
